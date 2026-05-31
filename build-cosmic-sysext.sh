@@ -14,10 +14,11 @@
 #
 # --no-sysext: if you would rather have a permanent, always-on install, this
 # copies the built tree straight into /usr (and /opt) on the real filesystem.
-# It overwrites / shadows base-system files in place, is NOT cleanly reversible
-# (there is no dpkg manifest), and /usr stays writable as usual. Use it only if
-# the sysext route does not suit you. The sysext is the default; raw is the
-# option.
+# It overwrites / shadows base-system files in place and /usr stays writable as
+# usual. A raw install is NOT as clean as a sysext, but the install now records
+# a manifest (and backs up any file it overwrites) under /var/lib/cosmic-sysext,
+# so --uninstall can make a best-effort reversal: restore the files it clobbered
+# and delete the ones it added. The sysext is the default; raw is the option.
 #
 # Patches applied to the build (BOTH install modes):
 #   * start-cosmic logging: redirects the session bootstrap's stdout/stderr to
@@ -39,18 +40,22 @@
 #
 # Usage:
 #   ./build-cosmic-sysext.sh                     # build + install the sysext (default)
-#   ./build-cosmic-sysext.sh --no-sysext         # build + install straight into / (no sysext)
+#   ./build-cosmic-sysext.sh --no-sysext         # build + install straight into / (tracked, see --uninstall)
 #   ./build-cosmic-sysext.sh --install-only      # (re)apply patches + install a PRE-BUILT tree; no fetch, no rebuild
 #   ./build-cosmic-sysext.sh --rustup            # use a rustup stable toolchain
 #   ./build-cosmic-sysext.sh --ref master        # build git master instead of latest release tag
 #   ./build-cosmic-sysext.sh --build-dir DIR     # where to clone/build (default: ~/Projects/cosmic-epoch)
-#   ./build-cosmic-sysext.sh --uninstall         # disable + remove the sysext (sysext installs only)
+#   ./build-cosmic-sysext.sh --uninstall         # remove COSMIC: drop the sysext, AND/OR reverse a raw install via its manifest
 #   ./build-cosmic-sysext.sh --remove-build-deps # after a successful build, remove the apt -dev/build packages this script installed
 #   ./build-cosmic-sysext.sh -y                  # assume "yes" to prompts
 #
 # --install-only and --no-sysext combine (reinstall a pre-built tree to the raw
 # filesystem). --install-only requires an existing build at
 # <build-dir>/cosmic-sysext -- run a normal build first.
+#
+# --uninstall auto-detects what is present: it removes the sysext if one is
+# installed and reverses a raw install if a manifest exists, so you do not need
+# to remember which mode you used.
 #
 set -euo pipefail
 
@@ -60,6 +65,7 @@ set -euo pipefail
 REPO_URL="https://github.com/pop-os/cosmic-epoch"
 EXT_NAME="cosmic-sysext"            # 'just sysext' staging-tree name AND the sysext name (do NOT rename for sysext installs)
 EXT_DEST="/var/lib/extensions"
+STATE_DIR="/var/lib/cosmic-sysext"  # persists the raw-install manifest + backups (outside the build tree)
 BUILD_DIR="${HOME}/Projects/cosmic-epoch"
 REF=""                              # empty => latest epoch-* tag; or "master"; or a specific tag
 USE_RUSTUP=0
@@ -103,6 +109,18 @@ confirm() {
   [[ "$ASSUME_YES" -eq 1 ]] && return 0
   read -r -p "$1 [y/N] " ans
   [[ "$ans" == "y" || "$ans" == "Y" ]]
+}
+
+# Refresh system caches so newly added / removed binaries, .so's, gschemas and
+# desktop entries register. All best-effort; never fatal.
+refresh_caches() {
+  $SUDO ldconfig || true
+  if command -v glib-compile-schemas >/dev/null 2>&1 && [[ -d /usr/share/glib-2.0/schemas ]]; then
+    $SUDO glib-compile-schemas /usr/share/glib-2.0/schemas || true
+  fi
+  if command -v update-desktop-database >/dev/null 2>&1 && [[ -d /usr/share/applications ]]; then
+    $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
+  fi
 }
 
 SUDO=""
@@ -186,6 +204,160 @@ apply_patches() {
 }
 
 # ---------------------------------------------------------------------------
+# Raw-install helpers (manifest + backup, so --uninstall can reverse it)
+#
+# Layout under $STATE_DIR:
+#   raw-install.files        every file/symlink target path we placed under /
+#   raw-install.newdirs      directories WE created (rmdir'd if empty on remove)
+#   raw-install.preexisting  targets that already existed (we overwrote them)
+#   raw-install.info         ref / date / build-dir, for reference
+#   backup/<path>            originals of every overwritten target (for restore)
+#
+# Manifests are cumulative across reinstalls: a file we installed last time is
+# treated as ours (not a distro original), and a real original's backup is
+# never clobbered by a second install.
+# ---------------------------------------------------------------------------
+
+# Enumerate staging-tree members (relative to $1), excluding sysext metadata.
+# $2 = "files" (non-dirs) or "dirs". Prints absolute target paths under /.
+_stage_list() {
+  local src="$1" kind="$2"
+  if [[ "$kind" == "dirs" ]]; then
+    ( cd "$src" && find . -path './usr/lib/extension-release.d' -prune -o -type d -print )
+  else
+    ( cd "$src" && find . -path './usr/lib/extension-release.d' -prune -o ! -type d -print )
+  fi | sed 's|^\.||' | sed '/^$/d' | sort -u
+}
+
+raw_install() {
+  local src="$BUILD_DIR/$EXT_NAME"
+  local files_tmp dirs_tmp pre_tmp newdirs_tmp prevf_tmp rel t backed=0
+
+  log "Installing COSMIC directly onto the root filesystem (no sysext)..."
+  warn "This copies COSMIC's files permanently into /usr (and /opt) and shadows base"
+  warn "files in place. A manifest + backups will be written to $STATE_DIR so that"
+  warn "--uninstall can attempt to reverse it, but a raw install is still less clean"
+  warn "than the sysext (a distro update after install can defeat the reversal)."
+  if ! confirm "Proceed with the raw filesystem install into / ?"; then
+    die "Aborted before raw install; nothing was copied."
+  fi
+
+  files_tmp="$(mktemp)"; dirs_tmp="$(mktemp)"
+  pre_tmp="$(mktemp)";   newdirs_tmp="$(mktemp)"; prevf_tmp="$(mktemp)"
+
+  _stage_list "$src" files > "$files_tmp"
+  _stage_list "$src" dirs  > "$dirs_tmp"
+
+  # Previously-installed file set (if any): those are OURS, not distro originals.
+  if [[ -f "$STATE_DIR/raw-install.files" ]]; then
+    sort -u "$STATE_DIR/raw-install.files" > "$prevf_tmp"
+  fi
+
+  log "Backing up any base-system files this install would overwrite..."
+  $SUDO mkdir -p "$STATE_DIR/backup"
+  while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    if [[ -e "$t" || -L "$t" ]]; then
+      # Skip files we ourselves installed in a previous run.
+      grep -qxF "$t" "$prevf_tmp" && continue
+      echo "$t" >> "$pre_tmp"
+      # Never clobber an existing backup (preserve the true original).
+      if [[ ! -e "$STATE_DIR/backup$t" && ! -L "$STATE_DIR/backup$t" ]]; then
+        $SUDO mkdir -p "$STATE_DIR/backup$(dirname "$t")"
+        $SUDO cp -a "$t" "$STATE_DIR/backup$t"
+        backed=$((backed + 1))
+      fi
+    fi
+  done < "$files_tmp"
+
+  # Directories we are creating (don't exist yet) -> candidates for rmdir later.
+  while IFS= read -r t; do
+    [[ -z "$t" || "$t" == "/" ]] && continue
+    [[ -d "$t" ]] || echo "$t" >> "$newdirs_tmp"
+  done < "$dirs_tmp"
+
+  # Extract into / via tar so files land ROOT-owned (cp -a would keep the build
+  # user's ownership) and sysext-only metadata is excluded. tar is always present.
+  log "Copying tree into / (root-owned, sysext metadata excluded)..."
+  ( cd "$src" \
+      && tar -cf - --owner=0 --group=0 \
+           --exclude='./usr/lib/extension-release.d' \
+           --exclude='./usr/lib/extension-release.d/*' . ) \
+    | $SUDO tar -xpf - -C /
+
+  # Merge with any prior manifest so removal stays complete across reinstalls.
+  [[ -f "$STATE_DIR/raw-install.preexisting" ]] && cat "$STATE_DIR/raw-install.preexisting" >> "$pre_tmp"
+  [[ -f "$STATE_DIR/raw-install.newdirs"     ]] && cat "$STATE_DIR/raw-install.newdirs"     >> "$newdirs_tmp"
+  sort -u "$pre_tmp"     -o "$pre_tmp"
+  sort -u "$newdirs_tmp" -o "$newdirs_tmp"
+
+  $SUDO mkdir -p "$STATE_DIR"
+  $SUDO cp "$files_tmp"   "$STATE_DIR/raw-install.files"
+  $SUDO cp "$pre_tmp"     "$STATE_DIR/raw-install.preexisting"
+  $SUDO cp "$newdirs_tmp" "$STATE_DIR/raw-install.newdirs"
+  printf 'ref=%s\ndate=%s\nbuild_dir=%s\n' "${REF:-unknown}" "$(date -Is)" "$BUILD_DIR" \
+    | $SUDO tee "$STATE_DIR/raw-install.info" >/dev/null
+
+  rm -f "$files_tmp" "$dirs_tmp" "$pre_tmp" "$newdirs_tmp" "$prevf_tmp"
+
+  refresh_caches
+  log "Raw install complete. Manifest: $STATE_DIR ($(wc -l < "$STATE_DIR/raw-install.files") files, ${backed} backed up)."
+}
+
+uninstall_raw() {
+  local files="$STATE_DIR/raw-install.files"
+  local pre="$STATE_DIR/raw-install.preexisting"
+  local newdirs="$STATE_DIR/raw-install.newdirs"
+  local t
+
+  if [[ ! -f "$files" ]]; then
+    return 1   # no raw install recorded
+  fi
+
+  warn "About to reverse a RAW COSMIC install using $STATE_DIR."
+  warn "Files COSMIC ADDED will be deleted; files it OVERWROTE will be restored from"
+  warn "backup. Caveat: distro packages updated AFTER the install may be reverted to"
+  warn "their pre-install state, or partially removed -- verify afterwards."
+  if ! confirm "Proceed with raw uninstall?"; then
+    warn "Raw uninstall declined; left in place."
+    return 0
+  fi
+
+  # 1. Restore originals we backed up.
+  if [[ -s "$pre" ]]; then
+    log "Restoring $(wc -l < "$pre") overwritten file(s) from backup..."
+    while IFS= read -r t; do
+      [[ -z "$t" ]] && continue
+      if [[ -e "$STATE_DIR/backup$t" || -L "$STATE_DIR/backup$t" ]]; then
+        $SUDO mkdir -p "$(dirname "$t")"
+        $SUDO cp -a "$STATE_DIR/backup$t" "$t"
+      fi
+    done < "$pre"
+  fi
+
+  # 2. Delete files we added (in files list, not in preexisting list).
+  log "Removing COSMIC-added files..."
+  comm -23 <(sort -u "$files") <(sort -u "$pre" 2>/dev/null || true) \
+    | while IFS= read -r t; do
+        [[ -z "$t" ]] && continue
+        $SUDO rm -f "$t"
+      done
+
+  # 3. Remove now-empty directories we created (deepest first; never force).
+  if [[ -f "$newdirs" ]]; then
+    sort -r "$newdirs" | while IFS= read -r t; do
+      [[ -z "$t" || "$t" == "/" ]] && continue
+      $SUDO rmdir "$t" 2>/dev/null || true
+    done
+  fi
+
+  refresh_caches
+  $SUDO rm -rf "$STATE_DIR"
+  log "Raw uninstall complete (manifest + backups removed)."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -205,23 +377,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
-# Uninstall mode
+# Uninstall mode (auto-detects sysext and/or raw install)
 # ---------------------------------------------------------------------------
 uninstall() {
-  if [[ "$USE_SYSEXT" -eq 1 ]]; then
+  local did=0
+  if [[ -d "$EXT_DEST/$EXT_NAME" ]]; then
     log "Disabling systemd-sysext and removing the COSMIC extension..."
     $SUDO systemctl disable --now systemd-sysext 2>/dev/null || true
     $SUDO rm -rf "${EXT_DEST:?}/${EXT_NAME}"
     $SUDO systemd-sysext refresh 2>/dev/null || true
-    log "Done. /usr and /opt are back to normal; base system unchanged."
-    log "Build tree at ${BUILD_DIR} was left in place (delete it manually to reclaim disk)."
-  else
-    warn "--uninstall with --no-sysext: a raw filesystem install has no manifest, so this"
-    warn "script cannot safely identify which files to remove (some overwrote distro-owned"
-    warn "files). Nothing was removed."
-    warn "To get a clean base back, reinstall the affected distro packages or re-image."
-    warn "The sysext install mode is the cleanly-removable one."
+    log "Sysext removed; /usr and /opt are back to normal."
+    did=1
   fi
+  if [[ -f "$STATE_DIR/raw-install.files" ]]; then
+    uninstall_raw && did=1
+  fi
+  if [[ "$did" -eq 0 ]]; then
+    warn "Found neither a sysext at $EXT_DEST/$EXT_NAME nor a raw manifest at $STATE_DIR."
+    warn "Nothing to uninstall."
+  fi
+  log "Build tree at ${BUILD_DIR} was left in place (delete it manually to reclaim disk)."
   exit 0
 }
 [[ "$DO_UNINSTALL" -eq 1 ]] && uninstall
@@ -394,37 +569,10 @@ if [[ "$USE_SYSEXT" -eq 1 ]]; then
   $SUDO systemd-sysext status || true
 
 else
-
   # -------------------------------------------------------------------------
-  # 7. Raw filesystem install (no sysext)
-  #    Stream the staging tree into / via tar so files land ROOT-owned (cp -a
-  #    would preserve the build user's ownership) and sysext-only metadata is
-  #    excluded. tar is always present; no rsync dependency.
+  # 7. Raw filesystem install (no sysext) -- tracked via manifest + backups.
   # -------------------------------------------------------------------------
-  log "Installing COSMIC directly onto the root filesystem (no sysext)..."
-  warn "This copies COSMIC's files permanently into /usr (and /opt); it overwrites or"
-  warn "shadows base-system files and is NOT cleanly reversible (no dpkg manifest)."
-  if ! confirm "Proceed with the raw filesystem install into / ?"; then
-    die "Aborted before raw install; nothing was copied."
-  fi
-
-  log "Copying tree into / (root-owned, sysext metadata excluded)..."
-  ( cd "$BUILD_DIR/$EXT_NAME" \
-      && tar -cf - --owner=0 --group=0 \
-           --exclude='./usr/lib/extension-release.d' \
-           --exclude='./usr/lib/extension-release.d/*' . ) \
-    | $SUDO tar -xpf - -C /
-
-  log "Refreshing system caches..."
-  $SUDO ldconfig || true
-  if [[ -d /usr/share/glib-2.0/schemas ]]; then
-    $SUDO glib-compile-schemas /usr/share/glib-2.0/schemas || true
-  fi
-  if command -v update-desktop-database >/dev/null 2>&1 && [[ -d /usr/share/applications ]]; then
-    $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
-  fi
-  log "Raw filesystem install complete."
-
+  raw_install
 fi
 
 # ---------------------------------------------------------------------------
@@ -474,8 +622,11 @@ if [[ "$USE_SYSEXT" -eq 1 ]]; then
   echo "        $0 --uninstall"
 else
   echo "  * This was a RAW install: COSMIC files now live permanently in /usr (writable as"
-  echo "    usual). There is no sysext to toggle, and no automatic uninstall (--uninstall"
-  echo "    cannot clean a raw install -- reinstall distro packages or re-image to revert)."
+  echo "    usual). A manifest + backups were recorded under $STATE_DIR."
+  echo
+  echo "  * To attempt to reverse it (restore overwritten files, delete added ones):"
+  echo "        $0 --uninstall"
+  echo "    Best-effort: a distro update made after this install can defeat the reversal."
 fi
 echo
 echo "  * Your Moonlight / HEVC stack is unaffected by COSMIC. If Moonlight's hardware path"
