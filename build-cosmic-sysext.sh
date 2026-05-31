@@ -515,7 +515,7 @@ if [[ "$INSTALL_ONLY" -eq 0 ]]; then
   git checkout --force "$REF"
   log "Syncing submodules (27 components -- this pulls a lot)..."
   git submodule update --init --recursive --force
-  git submodule foreach git lfs pull --all
+  git submodule foreach git lfs pull
 
   # -------------------------------------------------------------------------
   # 5. Build the system extension tree
