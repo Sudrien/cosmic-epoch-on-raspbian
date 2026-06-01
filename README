@@ -5,3 +5,5 @@ It has the (TODO: OPTION) to build with systemd-sysext if non-committal - you'll
 This was tested in Trixie. This is stealing & debugging code via Claude, and therefore presumably unlicensable.
 
 
+- how to assure the patch is happening?
+- cosmic-greeter has a special install, greetd somthing somthing
