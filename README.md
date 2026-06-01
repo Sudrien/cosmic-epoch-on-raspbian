@@ -32,3 +32,11 @@ user = "_greetd"
 
 Reboot and test now. In worse case, did you know you can access multiple terminals with ctrl+alt+F2 through F6 when you think you can't get out of graphical mode? 
 
+- You may run build-cosmic-sysext.sh now. It usses sudo beforehand for debian package install, and after compilation for install. If you change you mind on using --no-sysext after sleeping on it, cancel at the second prompt. sysext keeps you from updating a system while it's active.
+
+- So, you successfully logged in to cosmic via nwg-hello. You used the --no-sysext so it's a permanent install. GDBus.Error:org.freedesktop.PolicyKit1.Error.Failed: An authentication agent already exists for the given subject
+
+/etc/xdg/autostart/polkit-mate-authentication-agent-1.desktop
+/etc/xdg/autostart/lxpolkit.desktop
+
+You are looking for the `NotShowIn=` line and slapping `COSMIC` at the end, in both files. 
