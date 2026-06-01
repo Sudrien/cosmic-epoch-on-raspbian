@@ -12,7 +12,7 @@ This was tested in Trixie. This is stealing & debugging code via Claude, and the
 
 NOTES:
 
-- set up `greetd` first. You need a proper login screen to select sessions.
+- set up `greetd` first. You need a proper login screen to select sessions. You will probably update this later to cosmic-greeter, which still uses greetd, so you might as well make the greetd switch while other things are known working. 
 
 > sudo apt install greetd nwg-hello
 
@@ -30,4 +30,4 @@ user = "_greetd"
 
 > sudo systemctl enable greetd
 
-You will probably update this later to cosmic-greeter, which still uses greetd. 
+
