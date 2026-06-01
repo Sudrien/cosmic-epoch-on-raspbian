@@ -30,5 +30,5 @@ user = "_greetd"
 
 > sudo systemctl enable greetd
 
-Reboot and test now. In worse case, did you know you can access multiple terminals with ctrl+alt+F2 through F6 when you thing you can't get out of graphical mode? 
+Reboot and test now. In worse case, did you know you can access multiple terminals with ctrl+alt+F2 through F6 when you think you can't get out of graphical mode? 
 
