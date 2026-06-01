@@ -7,3 +7,27 @@ This was tested in Trixie. This is stealing & debugging code via Claude, and the
 
 - how to assure the patch is happening?
 - cosmic-greeter has a special install, greetd somthing somthing
+
+
+
+NOTES:
+
+- set up `greetd` first.
+
+> sudo apt install greetd nwg-hello
+
+> sudo usermod -aG video,render _greetd
+
+/etc/greetd/config.toml
+```
+[terminal]
+vt = 7
+[default_session]
+command = "labwc -C /etc/greetd/labwc -s nwg-hello"
+user = "_greetd"
+```
+> sudo systemctl disable lightdm
+
+> sudo systemctl enable greetd
+
+You will probably update this later to cosmic-greeter, which still uses greetd. 
