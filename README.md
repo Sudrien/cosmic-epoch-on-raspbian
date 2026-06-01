@@ -40,3 +40,14 @@ Reboot and test now. In worse case, did you know you can access multiple termina
 /etc/xdg/autostart/lxpolkit.desktop
 
 You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in both files. 
+
+- 
+
+/etc/greetd/config.toml
+```
+[terminal]
+vt = 7
+[default_session]
+command = "labwc -C /etc/greetd/labwc -s cosmic-greeter"
+user = "_greetd"
+```
