@@ -39,4 +39,4 @@ Reboot and test now. In worse case, did you know you can access multiple termina
 /etc/xdg/autostart/polkit-mate-authentication-agent-1.desktop
 /etc/xdg/autostart/lxpolkit.desktop
 
-You are looking for the `NotShowIn=` line and slapping `COSMIC` at the end, in both files. 
+You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in both files. 
