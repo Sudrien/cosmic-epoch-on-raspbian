@@ -12,7 +12,7 @@ This was tested in Trixie. This is stealing & debugging code via Claude, and the
 
 NOTES:
 
-- set up `greetd` first.
+- set up `greetd` first. You need a proper login screen to select sessions.
 
 > sudo apt install greetd nwg-hello
 
