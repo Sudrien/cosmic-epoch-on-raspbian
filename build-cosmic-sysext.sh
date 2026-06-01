@@ -82,7 +82,7 @@ AUTOSTART_OVR_NAME="cosmic-sysext-autostart"
 # Required build dependencies (from the cosmic-epoch README), minus rust/just
 # which we handle separately so we can honour system-vs-rustup choice.
 REQUIRED_PKGS=(
-  build-essential dbus git
+  build-essential dbus git git-lfs
   libdbus-1-dev libdisplay-info-dev libflatpak-dev libglvnd-dev
   libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev
   libinput-dev libpam0g-dev libpixman-1-dev libseat-dev libssl-dev
