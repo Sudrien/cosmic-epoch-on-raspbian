@@ -1,6 +1,6 @@
 This builds in ~/Projects/cosmic-epoch
 
-It has the (TODO: OPTION) to build with systemd-sysext if non-committal - you'll still probably want to switch form the default raspberry pi greeter for session selection. 
+It has the option to build with systemd-sysext if you're non-committal - you'll still probably want to switch from the default raspberry pi greeter for session selection. 
 
 This was tested in Trixie. This is stealing & debugging code via Claude, and therefore presumably unlicensable.
 
