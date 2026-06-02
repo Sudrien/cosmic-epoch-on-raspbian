@@ -18,7 +18,7 @@ NOTES:
 
 > sudo usermod -aG video,render _greetd
 
-/etc/greetd/config.toml
+`/etc/greetd/config.toml`
 ```
 [terminal]
 vt = 7
@@ -36,8 +36,9 @@ Reboot and test now. In worse case, did you know you can access multiple termina
 
 - So, you successfully logged in to cosmic via nwg-hello. You used the --no-sysext so it's a permanent install. GDBus.Error:org.freedesktop.PolicyKit1.Error.Failed: An authentication agent already exists for the given subject
 
-/etc/xdg/autostart/polkit-mate-authentication-agent-1.desktop
-/etc/xdg/autostart/lxpolkit.desktop
+`/etc/xdg/autostart/polkit-mate-authentication-agent-1.desktop`
+
+`/etc/xdg/autostart/lxpolkit.desktop`
 
 You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in both files. 
 
@@ -45,7 +46,7 @@ You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in 
 
 > usermod -a -G video cosmic-greeter
 
-/etc/greetd/config.toml
+`/etc/greetd/config.toml`
 ```
 [terminal]
 vt = 7
