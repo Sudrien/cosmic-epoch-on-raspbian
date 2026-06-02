@@ -1,5 +1,7 @@
 This builds in ~/Projects/cosmic-epoch
 
+I'm running on a 16 GB Pi 5. I don't know if the binaries link with less, I'm guessing "maybe" with 8GB and "no" with 4GB.
+
 It has the option to build with systemd-sysext if you're non-committal - you'll still probably want to switch from the default raspberry pi greeter for session selection. 
 
 This was tested in Trixie. This is stealing & debugging code via Claude, and therefore presumably unlicensable.
