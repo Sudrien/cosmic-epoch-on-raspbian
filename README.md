@@ -41,13 +41,16 @@ Reboot and test now. In worse case, did you know you can access multiple termina
 
 You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in both files. 
 
-- 
+- now it's time to change the greeter. 
 
+> usermod -a -G video cosmic-greeter
 /etc/greetd/config.toml
 ```
 [terminal]
 vt = 7
 [default_session]
-command = "labwc -C /etc/greetd/labwc -s cosmic-greeter"
-user = "_greetd"
+command = "/usr/bin/dbus-run-session /usr/bin/cosmic-comp /usr/bin/cosmic-greeter >>/tmp/cosmic-greeter.log 2>&1"
+# i'm sure this can be changed somehow, but yes, different user
+user = "cosmic-greeter"
 ```
+
