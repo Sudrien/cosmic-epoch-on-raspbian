@@ -44,6 +44,7 @@ You are looking for the `NotShowIn=` line and slapping `COSMIC;` at the end, in 
 - now it's time to change the greeter. 
 
 > usermod -a -G video cosmic-greeter
+
 /etc/greetd/config.toml
 ```
 [terminal]
